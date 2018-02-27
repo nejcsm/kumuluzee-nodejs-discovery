@@ -6,7 +6,7 @@ KumuluzEE Node.js Discovery provides full support for microservices packed as Do
 
 ## Installation
 
-Node version >= 0.8:
+Node version >= 8.0.0:
 
 ```
 $ npm install --save kumuluzee-nodejs-discovery
