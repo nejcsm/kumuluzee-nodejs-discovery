@@ -126,7 +126,7 @@ class EtcdDiscoveryUtil {
         interfaceAddresses = interfaceAddresses.concat(addresses);
       });
 
-      const servicePort = await ConfigurationUtil.get('kumuluzee.port') || 8080;
+      const servicePort = await ConfigurationUtil.get('kumuluzee.server.http.port') || 8080;
       let ipUrl = null;
 
       for (let i = 0; i < interfaceAddresses.length && !ipUrl; i++) {

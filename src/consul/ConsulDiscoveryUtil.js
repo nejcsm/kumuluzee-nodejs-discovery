@@ -58,7 +58,7 @@ class ConsulDiscoveryUtil {
     const serviceProtocol = await ConfigurationUtil.get('kumuluzee.discovery.consul.protocol') || 'http';
 
     // Get service port
-    const servicePort = await ConfigurationUtil.get('kumuluzee.port') || 8080;
+    const servicePort = await ConfigurationUtil.get('kumuluzee.server.http.port') || 8080;
 
     // Get retry delays
     this.startRetryDelay = await InitializationUtils.getStartRetryDelayMs(ConfigurationUtil, 'consul');
