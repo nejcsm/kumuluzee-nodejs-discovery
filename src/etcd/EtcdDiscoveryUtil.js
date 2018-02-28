@@ -38,8 +38,7 @@ class EtcdDiscoveryUtil {
     let sslContext = null;
     if (cert) {
       cert = cert.replace(/\s+/g, '').replace('-----BEGINCERTIFICATE-----', '').replace('-----ENDCERTIFICATE-----', '');
-      const decode = Buffer.from(cert, 'base64');
-      // TODO 509.x
+      sslContext = Buffer.from(cert, 'base64');
     }
 
     let etcdSecurityContext = null;
@@ -51,9 +50,7 @@ class EtcdDiscoveryUtil {
           pass: etcdPassword,
         },
       };
-      if (sslContext) {
-        // TODO
-      }
+      if (sslContext) etcdSecurityContext.ca = sslContext;
     }
     const etcdUrls = await ConfigurationUtil.get('kumuluzee.discovery.etcd.hosts') || null;
 
