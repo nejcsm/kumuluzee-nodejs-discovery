@@ -21,7 +21,7 @@ class EtcdDiscoveryUtil {
   lastKnownVersions = new Map()
 
   etcd = null
-  initalRequestRetryPolicy = null
+  initialRequestRetryPolicy = null
   startRetryDelay = null;
   maxRetryDelay = null;
 
@@ -72,17 +72,25 @@ class EtcdDiscoveryUtil {
         this.etcd = new EtcdClient(etcdHosts);
       }
 
-      this.resilience = await ConfigurationUtil.get('kumuluzee.discovery.resilience') || true;
+      this.resilience = await ConfigurationUtil.get('kumuluzee.discovery.resilience');
+
+      if (this.resilience === null) {
+        this.resilience = true;
+      }
 
       this.startRetryDelay = await InitializationUtils.getStartRetryDelayMs(ConfigurationUtil, 'etcd');
       this.maxRetryDelay = await InitializationUtils.getMaxRetryDelayMs(ConfigurationUtil, 'etcd');
 
       const initialRetryCount = await ConfigurationUtil.get('kumuluzee.discovery.etcd.initial-retry-count') || 1;
 
-      this.initalRequestRetryPolicy = initialRetryCount;
+      if (initialRetryCount < 0) {
+        this.initialRequestRetryPolicy = -1;
+      } else {
+        this.initialRequestRetryPolicy = initialRetryCount;
+      }
 
-      if (this.resilience) {
-        this.initalRequestRetryPolicy = 0;
+      if (!this.resilience) {
+        this.initialRequestRetryPolicy = 0;
       }
     } else {
       console.error('No etcd server hosts provided. Specify hosts with configuration key ' +
@@ -196,43 +204,47 @@ class EtcdDiscoveryUtil {
     }
   }
 
-  getServiceInstances(serviceName, version, environment, accessType) {
-    version = CommonUtil.determineVersion(this, serviceName, version, environment);
+  async getServiceInstances(serviceName, version, environment, accessType) {
+    version = await CommonUtil.determineVersion(this, serviceName, version, environment);
     if (!this.serviceInstances.has(`${serviceName}_${version}_${environment}`)) {
-      const etcdKeysResponseWhole = getEtcdDir(this.etcd, getServiceKeyInstances(environment, serviceName, version), this.initalRequestRetryPolicy, this.resilience);
+      const etcdKeysResponseWhole = await getEtcdDir(this.etcd, getServiceKeyInstances(environment, serviceName, version), this.initialRequestRetryPolicy, this.resilience, this.startRetryDelay, this.maxRetryDelay);
       const etcdKeysResponse = etcdKeysResponseWhole.body;
 
       const serviceUrls = new Map();
       if (etcdKeysResponse) {
-        etcdKeysResponse.node.nodes.forEach(node => {
-          let url = null;
-          let containerUrlString = null;
-          let clusterId = null;
-          let isActive = true;
+        if (etcdKeysResponse.node.nodes) {
+          etcdKeysResponse.node.nodes.forEach(node => {
+            let url = null;
+            let containerUrlString = null;
+            let clusterId = null;
+            let isActive = true;
 
-          node.nodes.forEach(instanceNode => {
-            const lastKeyLayer = getLastKeyLayer(instanceNode.key);
-            const { value } = node;
+            if (node.nodes) {
+              node.nodes.forEach(instanceNode => {
+                const lastKeyLayer = getLastKeyLayer(instanceNode.key);
+                const { value } = node;
 
-            if (lastKeyLayer === 'url' && value) url = value;
-            if (lastKeyLayer === 'containerUrl' && value) containerUrlString = value;
-            if (lastKeyLayer === 'clusterId' && value && value !== '') clusterId = value;
-            if (lastKeyLayer === 'status' && value === 'disabled') isActive = false;
-          });
-
-          if (isActive && url) {
-            try {
-              const containerUrl = (!containerUrlString || containerUrlString === '') ? null : new URL(containerUrlString);
-              serviceUrls.set(`${node.key}/url`, {
-                baseUrl: new URL(url),
-                containerUrl,
-                clusterId,
+                if (lastKeyLayer === 'url' && value) url = value;
+                if (lastKeyLayer === 'containerUrl' && value) containerUrlString = value;
+                if (lastKeyLayer === 'clusterId' && value && value !== '') clusterId = value;
+                if (lastKeyLayer === 'status' && value === 'disabled') isActive = false;
               });
-            } catch (err) {
-              console.error(`Malformed URL exception: ${err}`);
             }
-          }
-        });
+
+            if (isActive && url) {
+              try {
+                const containerUrl = (!containerUrlString || containerUrlString === '') ? null : new URL(containerUrlString);
+                serviceUrls.set(`${node.key}/url`, {
+                  baseUrl: new URL(url),
+                  containerUrl,
+                  clusterId,
+                });
+              } catch (err) {
+                console.error(`Malformed URL exception: ${err}`);
+              }
+            }
+          });
+        }
 
         this.serviceInstances.set(`${serviceName}_${version}_${environment}`, serviceUrls);
 
@@ -251,7 +263,7 @@ class EtcdDiscoveryUtil {
 
     const instances = [];
     if (presentServices && presentServices.size > 0) {
-      const gatewayUrl = this.getGatewayUrl(serviceName, version, environment);
+      const gatewayUrl = await this.getGatewayUrl(serviceName, version, environment);
       if (accessType === 'GATEWAY' && gatewayUrl) {
         instances.push(gatewayUrl);
       } else {
@@ -268,43 +280,70 @@ class EtcdDiscoveryUtil {
     return instances;
   }
 
-  getServiceInstance(serviceName, version, environment, accessType) {
-    const optionalServiceInstances = this.getServiceInstances(serviceName, version, environment, accessType);
+  async getServiceInstance(serviceName, version, environment, accessType) {
+    const optionalServiceInstances = await this.getServiceInstances(serviceName, version, environment, accessType);
 
     return CommonUtil.pickServiceInstanceRoundRobin(optionalServiceInstances) || null;
   }
 
-  getGatewayUrl(serviceName, version, environment) {
-    if (!this.gatewayUrls.has(`${serviceName}_${version}_${environment}`)) {
-      let gatewayUrl = null;
-      // let index = 0;
+  async getGatewayUrl(serviceName, version, environment) {
+    let retryCounter = 0;
+    let currentRetryDelay = this.startRetryDelay;
 
-      try {
-        const etcdKeysResponse = this.etcd.getSync(this.getGatewayKey(environment, serviceName, version), { maxRetries: this.initialRetryCount });
+    return new Promise ((resolve) => {
+      if (!this.gatewayUrls.has(`${serviceName}_${version}_${environment}`)) {
+        let gatewayUrl = null;
+        // let index = 0;
 
-        if (etcdKeysResponse.err) {
-          if (etcdKeysResponse.err.errorCode !== 100) {
-            console.error(`Etcd exception : ${etcdKeysResponse.err}`);
+        const callback = (err, res, data) => {
+          const get = () => {
+            this.etcd.get(this.getGatewayKey(environment, serviceName, version), { maxRetries: 0 }, callback);
+          };
+
+          if (err) {
+            if (err.errorCode === 100) {
+              return resolve(null);
+            }
+            if (retryCounter >= this.initialRequestRetryPolicy && this.initialRequestRetryPolicy !== -1) {
+              const message = 'Timeout exception. Cannot read given key in specified time or retry-count constraints.';
+              if (this.resilience) {
+                console.error(`${message} ${err}`);
+              } else {
+                throw new Error(`${message} ${err}`);
+              }
+              return resolve(null);
+            }
+            retryCounter += 1;
+
+            setTimeout(() => get(), currentRetryDelay);
+            currentRetryDelay *= 2;
+            if (currentRetryDelay > this.maxRetryDelay) {
+              currentRetryDelay = this.maxRetryDelay;
+            }
+          } else {
+            try {
+              index = etcdKeysResponse.body.node.modifiedIndex;
+              gatewayUrl = new URL(etcdKeysResponse.body.node.value);
+              this.gatewayUrls.set(`${serviceName}_${version}_${environment}`, gatewayUrl);
+              // this.watchServiceInstances(this.getGatewayKey(environment,serviceName, version), index);
+
+              resolve(gatewayUrl);
+            } catch (urlErr) {
+              console.error(`Malformed URL exception: ${urlErr}`);
+            }
           }
-        } else {
-          index = etcdKeysResponse.body.node.modifiedIndex;
-          gatewayUrl = new URL(etcdKeysResponse.body.node.value);
-          this.gatewayUrls.set(`${serviceName}_${version}_${environment}`, gatewayUrl);
-          // this.watchServiceInstances(this.getGatewayKey(environment,serviceName, version), index);
+        };
 
-          return gatewayUrl;
-        }
-      } catch (err) {
-        console.error(`Malformed URL exception: ${err}`);
+        this.etcd.get(this.getGatewayKey(environment, serviceName, version), { maxRetries: 0 }, callback);
+      } else {
+        return this.gatewayUrls.get(`${serviceName}_${version}_${environment}`);
       }
-    } else {
-      return this.gatewayUrls.get(`${serviceName}_${version}_${environment}`);
-    }
+    });
   }
 
-  getServiceVersions(serviceName, environment) {
+  async getServiceVersions(serviceName, environment) {
     if (!this.serviceVersions.has(`${serviceName}_${environment}`)) {
-      const etcdKeysResponseWhole = getEtcdDir(this.etcd, this.getServiceKeyVersions(serviceName, environment), this.initalRequestRetryPolicy, this.resilience);
+      const etcdKeysResponseWhole = await getEtcdDir(this.etcd, this.getServiceKeyVersions(serviceName, environment), this.initialRequestRetryPolicy, this.resilience, this.startRetryDelay, this.maxRetryDelay);
 
       const versions = [];
       const etcdKeysResponse = etcdKeysResponseWhole && etcdKeysResponseWhole.body;
@@ -360,7 +399,7 @@ class EtcdDiscoveryUtil {
         }
 
         this.serviceVersions.set(`${serviceName}_${environment}`, versions);
-        this.watchServiceInstances(this.getServiceKeyVersions(serviceName, environment), parseInt(etcdKeysResponseWhole.headers['x-etcd-index'], 10) + 1);
+        this.watchServiceInstances(this.getServiceKeyVersions(serviceName, environment), parseInt(etcdKeysResponseWhole.data['x-etcd-index'], 10) + 1);
       }
     }
 
@@ -545,14 +584,15 @@ class EtcdDiscoveryUtil {
           }
 
           if (this.isKeyForVersions(key)) {
-            if (this.serviceInstances.has(`${serviceName}_${version}_${environment}`)) {
+            if (this.serviceVersions.has(`${serviceName}_${environment}`)) {
               let versions = this.serviceVersions.get(`${serviceName}_${environment}`);
-              if (versions.includes(version) && this.serviceInstances.get(`${serviceName}_${version}_${environment}`).size === 0) {
+
+              if (versions.includes(version) && this.serviceInstances.get(`${serviceName}_${version}_${environment}`) && this.serviceInstances.get(`${serviceName}_${version}_${environment}`).size === 0) {
                 // version was removed and no other instances of this version exist, remove version
                 versions = versions.filter(v => v !== version);
 
                 this.serviceVersions.set(`${serviceName}_${environment}`, versions);
-              } else if (!versions.includes(version) && (!this.serviceInstances.has(`${serviceName}_${version}_${environment}`) || !this.serviceInstances.get(`${serviceName}_${version}_${environment}`).size === 0)) {
+              } else if (!versions.includes(version) && (!this.serviceInstances.has(`${serviceName}_${version}_${environment}`) || this.serviceInstances.get(`${serviceName}_${version}_${environment}`).size !== 0)) {
                 versions.push(version);
                 this.serviceVersions.set(`${serviceName}_${environment}`, versions);
               }

@@ -3,13 +3,12 @@ import semver from 'semver';
 class CommonUtils {
   lastInstanceServedIndex = 0
 
-  determineVersion(discoveryUtil, serviceName, version, environment) {
+  async determineVersion(discoveryUtil, serviceName, version, environment) {
     if (!semver.validRange(version) && !semver.valid(version)) return version;
 
-    // if (!version.includes('*') && !version.includes('x')) return version;
+    if (!version.includes('*') && !version.includes('x')) return version;
 
-    const versionsOpt = discoveryUtil.getServiceVersions(serviceName, environment);
-
+    const versionsOpt = await discoveryUtil.getServiceVersions(serviceName, environment);
     if (versionsOpt) {
       const sortedVersions = versionsOpt.sort((v1, v2) => semver.rcompare(v1, v2));
 
