@@ -31,6 +31,10 @@ class ConsulDiscoveryUtil {
     }
     console.info(`Connectig to Consul Agent at: ${consulAgentUrl}`);
 
+    // Get retry delays
+    this.startRetryDelay = await InitializationUtils.getStartRetryDelayMs(ConfigurationUtil, 'consul');
+    this.maxRetryDelay = await InitializationUtils.getMaxRetryDelayMs(ConfigurationUtil, 'consul');
+
     try {
       this.consul = consulClient({
         host: consulAgentUrl.hostname,
@@ -59,10 +63,6 @@ class ConsulDiscoveryUtil {
 
     // Get service port
     const servicePort = await ConfigurationUtil.get('kumuluzee.server.http.port') || 8080;
-
-    // Get retry delays
-    this.startRetryDelay = await InitializationUtils.getStartRetryDelayMs(ConfigurationUtil, 'consul');
-    this.maxRetryDelay = await InitializationUtils.getMaxRetryDelayMs(ConfigurationUtil, 'consul');
 
     const deregisterCriticalServiceAfter = await ConfigurationUtil.get('kumuluzee.config.consul.deregister-critical-service-after-s') || 60;
 
@@ -130,7 +130,7 @@ class ConsulDiscoveryUtil {
     let urlList = [];
 
     if (version) {
-      const resolvedVersion = CommonUtil.determineVersion(this, serviceName, version, environment);
+      const resolvedVersion = await CommonUtil.determineVersion(this, serviceName, version, environment);
 
       urlList = serviceList.filter(service => service.version == resolvedVersion).map(service => service.serviceUrl);
       if (accessType === 'GATEWAY' && urlList.length > 0) {
@@ -183,9 +183,9 @@ class ConsulDiscoveryUtil {
             console.error(tryErr);
           }
         };
-        // Error TODO TEST ERROR
+
         if (err) {
-          if (err.code === 'ECONNREFUSED') {
+          if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
             setTimeout(() => watch(), currentRetryDelay);
 
             currentRetryDelay *= 2;
@@ -194,6 +194,7 @@ class ConsulDiscoveryUtil {
             }
           } else {
             console.error(`Watch error: ${err}`);
+            watch();
           }
         } else {
         // Response is succesful

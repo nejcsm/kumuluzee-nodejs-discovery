@@ -1,8 +1,11 @@
+import { URL } from 'url';
+
 export const getConsulServiceKey = (serviceName, environment) => `${environment}/${serviceName}`;
 
 const serviceHealthToUrl = (serviceHealth) => {
   try {
-    return `${serviceHealth.Service.Tags.includes('https') ? 'https' : 'http'}://${serviceHealth.Node.Address}:${serviceHealth.Service.Port}`;
+    const url = new URL(`${serviceHealth.Service.Tags.includes('https') ? 'https' : 'http'}://${serviceHealth.Node.Address}:${serviceHealth.Service.Port}`);
+    return url.toString();
   } catch (err) {
     console.error(`Malformed URL when translating serviceHealth to URL: ${err}`);
   }
