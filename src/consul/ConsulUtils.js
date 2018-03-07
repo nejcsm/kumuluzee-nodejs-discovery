@@ -1,6 +1,6 @@
 import { URL } from 'url';
 
-export const getConsulServiceKey = (serviceName, environment) => `${environment}/${serviceName}`;
+export const getConsulServiceKey = (serviceName, environment) => `${environment}-${serviceName}`;
 
 const serviceHealthToUrl = (serviceHealth) => {
   try {

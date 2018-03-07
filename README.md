@@ -27,7 +27,7 @@ Library also supports retry delays on watch connection errors. For more informat
 
 ## Usage
 
-**KumuluzeeDisocvery**
+**KumuluzeeDiscovery**
 
 Firstly we need to import KumuluzEE Discovery client.
 

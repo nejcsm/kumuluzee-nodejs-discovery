@@ -289,6 +289,7 @@ class EtcdDiscoveryUtil {
 
     return new Promise ((resolve) => {
       if (!this.gatewayUrls.has(`${serviceName}_${version}_${environment}`)) {
+        this.gatewayUrls.set(`${serviceName}_${version}_${environment}`, null);
         let gatewayUrl = null;
         // let index = 0;
 
@@ -333,7 +334,7 @@ class EtcdDiscoveryUtil {
 
         this.etcd.get(this.getGatewayKey(environment, serviceName, version), { maxRetries: 0 }, callback);
       } else {
-        return this.gatewayUrls.get(`${serviceName}_${version}_${environment}`);
+        resolve(this.gatewayUrls.get(`${serviceName}_${version}_${environment}`));
       }
     });
   }

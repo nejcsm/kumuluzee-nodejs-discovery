@@ -172,7 +172,16 @@ class ConsulDiscoveryUtil {
       waitTime = `${waitTime}m`;
 
       const callback = (err, res, data) => {
-        const watch = () => {
+        const watch = async () => {
+          if (!this.connected) {
+            try {
+              const info = await this.consul.agent.self();
+              if (info.DebugConfig.DevMode) index = 0;
+              this.connected = true;
+            } catch (_) {
+            }
+          }
+
           try {
             this.kvClient.get({
               key: fullKey,
@@ -186,6 +195,7 @@ class ConsulDiscoveryUtil {
 
         if (err) {
           if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
+            this.connected = false;
             setTimeout(() => watch(), currentRetryDelay);
 
             currentRetryDelay *= 2;
